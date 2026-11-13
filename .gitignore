@@ -1,0 +1,34 @@
+# Local upstream reference checkout and generated/runtime data
+YuE/
+outputs/
+
+# Downloaded, converted, and locally fine-tuned weights stay local.
+models/
+
+# Python environments, caches, coverage, and package builds
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+/notes.md
+
+# Editor and OS state
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~

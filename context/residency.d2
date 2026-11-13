@@ -1,0 +1,23 @@
+direction: down
+generation: Generation {
+  plan: "1 · AR + vocabulary head\nOptional score planning → save text IDs"
+  semantic: "2 · AR + vocabulary head\nGenerate semantic IDs → save semantic.json"
+  chunks: Repeat for each acoustic chunk {
+    ar: "3 · AR without vocabulary head\nBuild per-layer conditioning K/V"
+    cache: "Unload AR weights\nKeep only evaluated K/V tensors"
+    nar: "4 · NAR weights + fixed K/V\nNoise → acoustic latents"
+    save: "Copy latents to host array\nUnload NAR and release K/V"
+    ar -> cache -> nar -> save
+  }
+  decode: "5 · VAE decoder only\nRead assembled latents, stream waveform tiles\nUnload decoder"
+  plan -> semantic: unload / reload
+  semantic -> chunks.ar: unload AR
+  chunks.save -> decode: after all chunks
+}
+lab: Audio lab {
+  input: "Read / resample audio on CPU"
+  encode: "VAE encoder only\nEncode tiles → host latents"
+  boundary: "Unload encoder\nSave latents.npy"
+  decode: "VAE decoder only\nDecode tiles → output WAV\nUnload decoder"
+  input -> encode -> boundary -> decode
+}

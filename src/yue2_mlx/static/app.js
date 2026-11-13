@@ -1,0 +1,118 @@
+const $ = id => document.getElementById(id);
+let state = {jobs: [], busy: false}, upload = null, uploading = false, submitting = false, previewURL = null;
+let flowUpload = null, flowUploading = false, flowPreviewURL = null;
+let referenceUpload=null, referenceUploading=false, referencePreviewURL=null;
+const cards = new Map();
+const historyView=location.pathname==='/history';let historyPage=0;const historySize=6;
+
+const labels = {reference_encode:'Encoding reference audio',reference_cache:'Building frozen reference memory',channel_left:'Starting independent left channel',channel_right:'Starting independent right channel',load_ar:'Loading the composer',load_nar:'Loading acoustic synthesis',load_encoder:'Loading audio encoder',load_decoder:'Loading audio decoder',abc:'Writing the score',semantic:'Composing the audio',acoustic_chunk:'Preparing an audio section',flow:'Shaping the sound',decode:'Rendering the waveform',encode:'Encoding your recording'};
+function error(message='') {$('error').textContent=message; $('error').hidden=!message;}
+async function api(path, options={}) {const response=await fetch(path,options); const data=await response.json(); if(!response.ok) throw new Error(data.error || 'Something went wrong.'); return data;}
+function post(path,data){return api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});}
+function setMode(mode){document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.mode===mode)); $('create-form').hidden=mode!=='generate';$('audio-form').hidden=mode!=='reconstruct';$('flow-form').hidden=mode!=='flow-edit';$('page-title').innerHTML=mode==='generate'?'A little idea.<br>A new sound.':mode==='flow-edit'?'A familiar sound.<br>A different path.':'The same recording.<br>A different listen.';$('page-description').textContent=mode==='generate'?'Give your words a melody. Take it somewhere new.':mode==='flow-edit'?'Explore partial flow in acoustic latent space.':'Explore the space between audio and reconstruction.';globalThis.semanticMode?.(mode);error();}
+document.querySelectorAll('.nav[data-mode]').forEach(n=>n.addEventListener('click',()=>setMode(n.dataset.mode)));
+const example='[Verse]\nMorning light across the floor\nFootsteps passing by the door\n\n[Chorus]\nLet the quiet carry on\nThere is music in the dawn';
+$('lyrics').value=localStorage.getItem('yue2-lyrics') ?? example;$('style').value=localStorage.getItem('yue2-style') || $('style').value;
+$('example').onclick=()=>{$('lyrics').value=example;};
+$('random-seed').onclick=()=>{$('seed').value=crypto.getRandomValues(new Uint32Array(1))[0];};
+function bindDrop(element, input, accept){['dragenter','dragover'].forEach(t=>element.addEventListener(t,e=>{e.preventDefault();element.classList.add('dragging');}));['dragleave','drop'].forEach(t=>element.addEventListener(t,e=>{e.preventDefault();element.classList.remove('dragging');}));element.addEventListener('drop',e=>{if(e.dataTransfer.files.length)accept(e.dataTransfer.files[0]);});input.addEventListener('change',()=>{if(input.files.length)accept(input.files[0]);input.value='';});}
+for(const name of ['lyrics','abc'])bindDrop($(name+'-drop'),$(name+'-file'),async file=>{try{$(name).value=await file.text();if(name==='abc' && $('cot').value==='off')$('cot').value='full';error();}catch(e){error(e.message);}});
+function buttons(){globalThis.semanticButtons?.();for(const [id,label] of [['generate-button','Generate music'],['reconstruct-button','Encode & decode'],['flow-button','Run flow experiment']])$(id).firstChild.textContent=state.busy?'Add to queue ':label+' ';const disabled=submitting;$('generate-button').disabled=disabled || !state.generation_ready;$('reconstruct-button').disabled=disabled || uploading || !upload || !state.audio_ready;$('flow-button').disabled=disabled || flowUploading || referenceUploading || ($('reference-placement').value!=='off' && !referenceUpload) || !flowUpload || !state.generation_ready;$('engine-status').textContent=state.busy?`● Working locally · ${state.queued||0} queued`:(state.generation_ready || state.audio_ready)?'● Ready to create':'Models not found';}
+async function uploadAudio(file){if(uploading)return;error();uploading=true;upload=null;buttons();$('audio-drop').querySelector('strong').textContent='Uploading your audio…';try{const result=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});upload={id:result.id,name:file.name};if(previewURL)URL.revokeObjectURL(previewURL);previewURL=URL.createObjectURL(file);$('input-player').src=previewURL;$('upload-name').textContent=file.name;$('upload-info').textContent=`${result.seconds.toFixed(1)}s · ${(result.sample_rate/1000).toFixed(1)} kHz`;$('upload-preview').hidden=false;}catch(e){error(e.message);$('upload-preview').hidden=true;}finally{uploading=false;$('audio-drop').querySelector('strong').textContent=upload?'Drop another audio file to replace':'Drop your audio here';buttons();}}
+bindDrop($('audio-drop'),$('audio-file'),uploadAudio);$('audio-drop').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('audio-file').click();}});$('replace-file').onclick=()=>$('audio-file').click();
+async function uploadFlow(file){if(flowUploading)return;error();flowUploading=true;flowUpload=null;buttons();$('flow-drop').querySelector('strong').textContent='Uploading your audio…';try{const result=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});flowUpload={id:result.id,name:file.name};if(flowPreviewURL)URL.revokeObjectURL(flowPreviewURL);flowPreviewURL=URL.createObjectURL(file);$('flow-player').src=flowPreviewURL;$('flow-name').textContent=file.name;$('flow-info').textContent=`${result.seconds.toFixed(1)}s · ${(result.sample_rate/1000).toFixed(1)} kHz`;$('flow-preview').hidden=false;}catch(e){error(e.message);$('flow-preview').hidden=true;}finally{flowUploading=false;$('flow-drop').querySelector('strong').textContent=flowUpload?'Drop another audio file to replace':'Drop your audio here';buttons();}}
+bindDrop($('flow-drop'),$('flow-file'),uploadFlow);$('flow-drop').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('flow-file').click();}});
+function anchorControls(){const enabled=$('flow-mode').value==='anchored';$('flow-anchor-controls').hidden=!enabled;$('flow-anchor').disabled=!enabled;}
+async function uploadReference(file){
+    if(referenceUploading)return;error();
+    referenceUploading=true;referenceUpload=null;buttons();$('reference-drop').querySelector('strong').textContent='Uploading reference…';
+    try{const result=await api('/api/upload',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});referenceUpload={id:result.id,name:file.name};if(referencePreviewURL)URL.revokeObjectURL(referencePreviewURL);referencePreviewURL=URL.createObjectURL(file);$('reference-player').src=referencePreviewURL;$('reference-name').textContent=file.name;$('reference-preview').hidden=false;if($('reference-placement').value==='off')$('reference-placement').value='prefix';}
+    catch(e){error(e.message);$('reference-preview').hidden=true;}
+    finally{referenceUploading=false;$('reference-drop').querySelector('strong').textContent=referenceUpload?'Drop another reference to replace':'Drop reference audio here';buttons();}
+}
+function clearReference(){referenceUpload=null;if(referencePreviewURL)URL.revokeObjectURL(referencePreviewURL);referencePreviewURL=null;$('reference-player').removeAttribute('src');$('reference-player').load();$('reference-preview').hidden=true;$('reference-placement').value='off';$('reference-drop').querySelector('strong').textContent='Drop reference audio here';buttons();}
+bindDrop($('reference-drop'),$('reference-file'),uploadReference);$('reference-drop').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('reference-file').click();}});
+$('reference-remove').onclick=()=>{if(!referenceUploading)clearReference();};$('reference-placement').addEventListener('change',buttons);
+$('flow-mode').addEventListener('change',anchorControls);anchorControls();
+$('flow-form').addEventListener('submit',e=>{e.preventDefault();if(flowUpload)submit({kind:'flow-edit',upload:flowUpload.id,name:flowUpload.name,style:$('flow-style').value,lyrics:$('flow-lyrics').value,mode:$('flow-mode').value,start_time:Number($('flow-time').value),steps:Number($('flow-steps').value),seed:Number($('flow-seed').value),anchor_strength:Number($('flow-anchor').value),independent_channels:$('flow-channels').value==='independent',reference_upload:referenceUpload?.id||'',reference_name:referenceUpload?.name||'',reference_placement:$('reference-placement').value,reference_strength:Number($('reference-strength').value)});});
+async function submit(data){if(['generate','flow-edit'].includes(data.kind)){const prefix=data.kind==='generate'?'generation':'flow';data.acoustic_choice=$(prefix+'-acoustic').value;data.acoustic_scale=Number($(prefix+'-acoustic-scale').value);data.ar_choice=$(prefix+'-ar').value;data.ar_scale=Number($(prefix+'-ar-scale').value);}error();submitting=true;buttons();try{await post('/api/jobs',data);await refresh();}catch(e){error(e.message);}finally{submitting=false;buttons();}}
+function replaceOptions(select,choices){const signature=JSON.stringify(choices);if(select.dataset.options===signature)return;const chosen=select.value;select.replaceChildren(...choices.map(c=>new Option(c.name,c.id)));if(choices.some(c=>c.id===chosen))select.value=chosen;select.dataset.options=signature;}
+function acousticOptions(){const choices=[{id:'stock',name:'Stock YuE2'},...(state.tokenizers||[])],ars=[{id:'stock',name:'Stock YuE2'},...(state.ar_adapters||[])];for(const id of ['generation-acoustic','flow-acoustic'])replaceOptions($(id),choices);for(const id of ['generation-ar','flow-ar','semantic-ar'])replaceOptions($(id),ars);}
+$('create-form').addEventListener('submit',e=>{e.preventDefault();localStorage.setItem('yue2-lyrics',$('lyrics').value);localStorage.setItem('yue2-style',$('style').value);submit({kind:'generate',style:$('style').value,lyrics:$('lyrics').value,abc:$('abc').value,cot:$('cot').value,seconds:Number($('seconds').value),steps:Number($('steps').value),seed:Number($('seed').value)});});
+$('audio-form').addEventListener('submit',e=>{e.preventDefault();if(upload)submit({kind:'reconstruct',upload:upload.id,name:upload.name,independent_channels:$('audio-channels').value==='independent'});});
+function make(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;}
+const settingNames={parameters:'Training parameters',songs:'Dataset snapshot',reference_name:'Reference recording',reference_placement:'Reference placement',reference_strength:'Reference strength',acoustic_choice:'Acoustic checkpoint',acoustic_scale:'Acoustic strength',ar_choice:'AR checkpoint',ar_scale:'AR strength',kind:'Workflow',mode:'Flow method',start_time:'Start time',steps:'Steps',seed:'Seed',anchor_strength:'Source pull',independent_channels:'Independent L/R',seconds:'Length limit (seconds)',cot:'Composition',style:'Style',lyrics:'Lyrics',abc:'Supplied ABC score',name:'Input filename',model:'Model directory',memory_gib:'Memory limit (GiB)'};
+async function useSettings(job){
+    if(job.kind==='train'){location.href='/training';return;}
+    if(historyView){sessionStorage.setItem('yue2-reuse-job',JSON.stringify(job));location.href='/';return;}
+    if(job.kind==='semantic-audio')return globalThis.reuseSemantic(job);
+    if(uploading || flowUploading || referenceUploading){error('Wait for the current upload to finish.');return;}
+    const s=job.settings;if(!s)return;setMode(job.kind);
+    const mappings=job.kind==='generate'?{style:'style',lyrics:'lyrics',abc:'abc',cot:'cot',seconds:'seconds',steps:'steps',seed:'seed'}:job.kind==='flow-edit'?{style:'flow-style',lyrics:'flow-lyrics',mode:'flow-mode',start_time:'flow-time',steps:'flow-steps',seed:'flow-seed',anchor_strength:'flow-anchor',reference_placement:'reference-placement',reference_strength:'reference-strength'}:{};
+    $(job.kind==='generate'?'create-form':job.kind==='flow-edit'?'flow-form':'audio-form').reset();
+    for(const [key,id] of Object.entries(mappings))if(Object.hasOwn(s,key))$(id).value=s[key];
+    if(['generate','flow-edit'].includes(job.kind)){const prefix=job.kind==='generate'?'generation':'flow',select=$(prefix+'-acoustic');select.value=s.acoustic_choice||'stock';$(prefix+'-acoustic-scale').value=s.acoustic_scale??1;$(prefix+'-ar').value=s.ar_choice||'stock';$(prefix+'-ar-scale').value=s.ar_scale??1;if(!select.value||!$(prefix+'-ar').value){error('A saved checkpoint is unavailable; choose another checkpoint.');return;}}
+    if(job.kind!=='generate')$(job.kind==='flow-edit'?'flow-channels':'audio-channels').value=s.independent_channels?'independent':'joint';
+    anchorControls();
+    if(job.kind==='flow-edit'){
+        const placement=s.reference_placement||'off';clearReference();$('reference-placement').value=placement;
+        if(placement!=='off'){
+            $('reference-details').open=true;
+            const refUrl=s.reference_upload?`/uploads/${s.reference_upload}`:(job.files||[]).includes('reference-resampled.wav')?`/files/${job.id}/reference-resampled.wav`:null;
+            if(refUrl){try{const r=await fetch(refUrl);if(!r.ok)throw new Error('Reference audio unavailable; upload it again.');await uploadReference(new File([await r.blob()],s.reference_name||'reference.wav'));$('reference-placement').value=placement;}catch(e){error(e.message);}}
+            else error('Upload the original reference audio to repeat this session.');
+        }
+        buttons();
+    }
+    if(job.kind!=='generate'){
+        // Clear the previous input: never silently reuse a different recording.
+        if(job.kind==='flow-edit'){flowUpload=null;$('flow-preview').hidden=true;}else{upload=null;$('upload-preview').hidden=true;}buttons();
+        const url=s.upload?`/uploads/${s.upload}`:(job.files||[]).includes('input-resampled.wav')?`/files/${job.id}/input-resampled.wav`:null;
+        if(url){try{const response=await fetch(url);if(!response.ok)throw new Error('Original audio is unavailable; drop the recording again.');const file=new File([await response.blob()],s.name||'input-resampled.wav');await (job.kind==='flow-edit'?uploadFlow(file):uploadAudio(file));}catch(e){error(e.message);}}
+        else error('Settings restored. Drop the original recording to repeat this experiment.');
+    }
+    if(job.settings_recovered)error('Recovered available settings from an older session. Missing settings use form defaults; check before running.');
+    $('page-title').scrollIntoView({behavior:'smooth'});
+}
+function renderSettings(card,job){
+    const signature=JSON.stringify([job.settings,job.settings_recovered]);if(card.dataset.settings===signature)return;card.dataset.settings=signature;
+    card.querySelector('.saved-settings')?.remove();
+    const s=job.settings||{};const brief=[s.mode,s.cot,s.nar_adapter!==undefined?(s.nar_adapter?'NAR v4 adapter':'Stock NAR'):null,s.start_time!==undefined?`t=${s.start_time}`:null,s.steps!==undefined?`${s.steps} steps`:null,s.seed!==undefined?`seed ${s.seed}`:null,s.independent_channels?'Independent L/R':null,s.reference_placement && s.reference_placement!=='off'?`ref ${s.reference_placement} ×${s.reference_strength}`:null].filter(Boolean).join(' · ');
+    const details=make('details','saved-settings');details.append(make('summary','',`Settings${job.settings_recovered?' (recovered)':''}${brief?' · '+brief:''}`));
+    if(!job.settings){details.append(make('p','subtle','Settings were not saved for this session.'));card.append(details);return;}
+    const rows=[];for(const [key,label] of Object.entries(settingNames)){if(Object.hasOwn(job.settings,key)){const value=job.settings[key];rows.push(`${label}: ${value===''?'(empty)':typeof value==='object'?JSON.stringify(value,null,2):value}`);}}
+    const pre=make('pre','',rows.join('\n\n'));pre.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.6 system-ui;max-height:340px;overflow:auto';details.append(pre);
+    if(job.settings_recovered)details.append(make('p','subtle','Only settings found in older artifacts are shown. Missing values are unknown.'));
+    details.append(make('p','subtle','Reuse restores form values and available input audio; it does not start a job. The current server model and runtime are used.'));
+    const reuse=make('button','text-button','Use settings');reuse.type='button';reuse.onclick=async()=>{reuse.disabled=true;try{await useSettings(job);}finally{reuse.disabled=false;}};details.append(reuse);card.append(details);
+}
+function renderJob(job){let card=cards.get(job.id);if(!card){card=make('article','job');card.innerHTML='<div class="job-top"><span class="job-kind"></span><span class="job-status"></span></div><h3></h3><time></time><div class="progress-text" role="status"></div><div class="progress-bar"><i></i></div><div class="job-media"></div><div class="downloads"></div><div class="job-meta"></div><button class="stop" type="button">Stop session</button>';cards.set(job.id,card);card.querySelector('.stop').onclick=async()=>{try{await post('/api/cancel',{id:job.id});await refresh();}catch(e){error(e.message);}};}
+card.dataset.status=job.status;card.querySelector('.job-kind').textContent=job.kind==='train'?'Tokenizer training':job.kind==='semantic-audio'?'Semantic reconstruction':job.kind==='generate'?'Music generation':job.kind==='flow-edit'?'Flow experiment':'Audio reconstruction';card.querySelector('h3').textContent=job.title;card.querySelector('time').textContent=new Date(job.created).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});const running=['running','cancelling'].includes(job.status);card.querySelector('.job-status').textContent={queued:`Queued · #${job.queue_position||'–'}`,done:'Ready',running:'In progress',failed:'Failed',cancelled:'Stopped',cancelling:'Stopping',interrupted:'Interrupted'}[job.status]||job.status;
+const match=job.progress.match(/^(\w+)(?:: (\d+)\/(\d+))?$/);card.querySelector('.progress-text').textContent=match&&labels[match[1]]?labels[match[1]]+(match[2]?` · ${match[2]} / ${match[3]}`:''):job.progress;const bar=card.querySelector('.progress-bar');bar.hidden=!running;bar.classList.toggle('indeterminate',!match?.[2]);bar.firstChild.style.width=match?.[2]?`${Math.min(100,100*Number(match[2])/Number(match[3]))}%`:'';card.querySelector('.stop').hidden=!running && job.status!=='queued';card.querySelector('.stop').textContent=job.status==='queued'?'Remove from queue':'Stop session';card.querySelector('.stop').disabled=job.status==='cancelling';
+const signature=JSON.stringify(job.files);if(card.dataset.files!==signature){card.dataset.files=signature;const media=card.querySelector('.job-media');media.replaceChildren();const downloads=card.querySelector('.downloads');downloads.replaceChildren();const audioLabels={'semantic-audio.wav':'Semantic reconstruction · experimental','reference-resampled.wav':'Reference recording','input-resampled.wav':'Original · resampled for comparison','reconstruction.wav':['flow-edit','semantic-audio'].includes(job.kind)?'VAE-only baseline':'Reconstruction','flow-edit.wav':'Flow result · experimental','audio.flac':'Your track'};for(const name of Object.keys(audioLabels)){if(!(job.files||[]).includes(name))continue;media.append(make('div','audio-label',audioLabels[name]));const player=make('audio');player.controls=true;player.preload='metadata';player.src=`/files/${job.id}/${encodeURIComponent(name)}`;media.append(player);}const fileLabels={'semantic-audio.wav':'↓ Semantic audio','semantic.npy':'↓ Semantic tokens','semantic.json':'↓ Semantic plan','reference-resampled.wav':'↓ Reference','reference-latents.npy':'↓ Reference latents','reference-initial-latents.npy':'↓ Reference initial state','audio.flac':'↓ Audio','reconstruction.wav':'↓ Reconstruction','flow-edit.wav':'↓ Flow result','input-resampled.wav':'↓ Original','score.abc':'↓ ABC score','latents.npy':'↓ Latents','source-latents.npy':'↓ Source latents','initial-latents.npy':'↓ Initial state','result.json':'↓ Details'};for(const name of job.files||[]){const label=fileLabels[name] || (/^(left|right)-(latents|source-latents|initial-latents)\.npy$/.test(name)?'↓ '+name:null);if(!label)continue;const a=make('a','',label);a.href=`/files/${job.id}/${encodeURIComponent(name)}`;a.download=name;downloads.append(a);}}
+card.querySelector('.job-meta').textContent=[job.truncated?'Length limit reached':null,job.peak_gib?`${job.peak_gib.toFixed(2)} GiB peak MLX memory`:null].filter(Boolean).join(' · ');renderSettings(card,job);return card;}
+function discardCard(id,card){for(const player of card.querySelectorAll('audio')){player.pause();player.removeAttribute('src');player.load();}card.remove();cards.delete(id);}
+async function refresh(){try{
+    state=await api('/api/state');acousticOptions();buttons();
+    const active=j=>['running','queued','cancelling'].includes(j.status);
+    const past=state.jobs.filter(j=>!active(j));const pages=Math.max(1,Math.ceil(past.length/historySize));
+    historyPage=Math.min(historyPage,pages-1);
+    const visible=historyView?past.slice(historyPage*historySize,(historyPage+1)*historySize):[...state.jobs.filter(active),...past.slice(0,3)];
+    const ids=new Set(visible.map(j=>j.id));
+    for(const [id,card] of cards)if(!ids.has(id))discardCard(id,card);
+    $('session-count').textContent=historyView?past.length:visible.length;
+    if($('history-page-label')){$('history-page-label').textContent=`Page ${historyPage+1} / ${pages}`;$('history-prev').disabled=historyPage===0;$('history-next').disabled=historyPage+1>=pages;}
+    const container=$('jobs');if(visible.length)container.querySelector('.empty')?.remove();
+    visible.forEach((job,index)=>{const card=renderJob(job);if(container.children[index]!==card)container.insertBefore(card,container.children[index]||null);});
+}catch(e){if($('semantic-button'))$('semantic-button').disabled=true;$('engine-status').textContent='Studio disconnected';$('generate-button').disabled=true;$('reconstruct-button').disabled=true;$('flow-button').disabled=true;}}
+const historyLink=make('a','text-button',historyView?'← Back to workspace':'Browse full history →');historyLink.href=historyView?'/':'/history';document.querySelector('.sessions .section-heading').after(historyLink);
+if(historyView){
+    document.querySelector('.editor').hidden=true;document.querySelector('.workspace').style.gridTemplateColumns='1fr';
+    $('page-title').textContent='Session history';$('page-description').textContent='Older results, six sessions at a time. Use settings to return a run to the workspace.';
+    const nav=make('div','label-row');nav.style.margin='16px 0';
+    for(const [id,text,delta] of [['history-prev','← Previous',-1],['history-next','Next →',1]]){const button=make('button','text-button',text);button.id=id;button.onclick=()=>{historyPage+=delta;refresh();};nav.append(button);}
+    const label=make('span','subtle');label.id='history-page-label';nav.append(label);historyLink.after(nav);
+    document.querySelectorAll('.nav[data-mode]').forEach(n=>{n.onclick=()=>{location.href='/';};});
+}
+window.addEventListener('load',async()=>{if(!historyView){const saved=sessionStorage.getItem('yue2-reuse-job');if(saved){sessionStorage.removeItem('yue2-reuse-job');try{await refresh();await useSettings(JSON.parse(saved));}catch(e){error(e.message);}}}});
+refresh();setInterval(refresh,1200);

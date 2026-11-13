@@ -1,0 +1,22 @@
+direction: down
+classes: {
+  model: {style.fill: "#e4eddf"; style.stroke: "#46634e"; style.border-radius: 10}
+  data: {style.fill: "#e8effa"; style.stroke: "#56749b"; style.border-radius: 10}
+}
+source: "Uploaded recording\nMono mix → resample to 24 kHz" {class: data}
+mert: "MERT-v2-FullSong · FP32 · separately loaded\nLog-mel → ConvNeXt → 21 Conformer blocks\n30-second sections, one at a time" {class: model}
+features: "MERT feature space · [F, 1024]\nInterpolate to 25 Hz, normalize across track\nCPU arrays survive unloading MERT" {class: data}
+head: "Tokenizer head · FP32 · separately loaded\n1024 → 512, 8 transformer layers\nOverlapping 512-frame windows\n512 → 32768 logits, argmax" {class: model}
+codes: "Semantic code space · [F] integers\nValues 0…32767, 25 per second\nNot acoustic latents, not NAR hidden states" {class: data}
+text: "Optional style + lyrics · plain text\nExisting text tokenizer → prompt IDs" {class: data}
+join: "[prompt IDs, semantic IDs + 151853, music_end]\nOne sequence of integer IDs" {class: data}
+ar: "Existing AR · headless conditioning pass\nEmbed IDs, run causal layers, retain K/V\nUnload AR weights" {class: model}
+kv: "28 pairs of fixed AR keys and values" {class: data}
+noise: "Initial acoustic state [F, 64]\nFresh noise, clean source, or (1-a)*source+a*noise\nResume at t; a follows t or is independently set\nOptional post-step source pull" {class: data}
+nar: "Existing NAR · optionally v4 adapter\n28 layers, iterative flow matching\nAdapter updates linears + replaces input/output projections" {class: model}
+latent: "Acoustic/VAE latent space · [F, 64]" {class: data}
+vae: "Existing VAE decoder · FP32\nSeparately loaded after NAR unloads" {class: model}
+wave: "New 48 kHz stereo waveform\nNot guaranteed to preserve source stereo or detail" {class: data}
+source -> mert -> features -> head -> codes -> join -> ar -> kv -> nar -> latent -> vae -> wave
+text -> join
+noise -> nar

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Training · YuE2 Studio</title><link rel="stylesheet" href="/style.css"></head>
+<body><aside class="sidebar"><a class="brand" href="/">YuE2 Studio</a><nav><a class="nav" href="/">← Audio workspace</a><a class="nav" href="/history">Session history</a><a class="nav active" href="/training">Training</a></nav><div class="sidebar-bottom">Audio-only adaptation<br>No manual labels required.</div></aside>
+<main><header><span class="eyebrow">LOCAL TOKENIZER TRAINING</span><span id="status" class="badge">Connecting…</span></header>
+<section class="intro"><div><h1>Teach it your sound.</h1><p>Adapt the tokenizer head and acoustic adapter to your recordings.</p></div></section>
+<div class="workspace"><section class="editor panel">
+<h2>Song collection</h2><p class="lab-copy">Drop multiple songs. MERT features and VAE latents are extracted automatically; you do not need lyrics or semantic labels.</p>
+<label id="songs-drop" class="audio-drop" for="songs-file" tabindex="0"><strong>Drop songs here</strong><span>or choose multiple files</span><input id="songs-file" type="file" accept="audio/*,.wav,.flac,.mp3,.ogg,.aiff" multiple hidden></label>
+<p id="upload-status" role="status"></p><div id="songs"></div>
+<small>Remove excludes a song from future training runs. Uploads remain available to existing queued runs and history. Each queued run takes its own dataset snapshot.</small>
+<form id="training-form"><label for="name">Checkpoint name</label><input id="name" value="My sound" required>
+<label for="base">Start from</label><select id="base"><option value="mothersuperior">Mothersuperior v4</option></select><small>Starting from a saved checkpoint loads its head and paired NAR weights with a fresh optimizer, not an exact training resume.</small>
+<div class="two-fields"><div><label for="steps">Optimizer steps</label><input id="steps" type="number" min="1" value="500" required></div><div><label for="save_every">Save every N steps</label><input id="save_every" type="number" min="1" value="50" required></div></div>
+<label for="window_frames">Training window · frames at 25 Hz</label><input id="window_frames" type="number" min="1" max="512" value="256" required><small>256 = 10.24 seconds; 512 = 20.48 seconds, the tokenizer’s trained positional window. Short songs use shorter windows. Start small to check memory.</small>
+<label><input id="train_head" type="checkbox" checked> Train tokenizer head</label><label><input id="train_nar" type="checkbox" checked> Train NAR adapter + input/output projections</label>
+<details><summary>Learning rates & regularization</summary>
+<label for="learning_rate_head">Tokenizer learning rate</label><input id="learning_rate_head" type="number" min="0.000000001" step="any" value="0.0001" required>
+<label for="learning_rate_lora">NAR adapter learning rate</label><input id="learning_rate_lora" type="number" min="0.000000001" step="any" value="0.00005" required>
+<label for="learning_rate_io">NAR input/output learning rate</label><input id="learning_rate_io" type="number" min="0.000000001" step="any" value="0.00002" required>
+<label for="accumulation">Gradient accumulation · flow windows per update</label><input id="accumulation" type="number" min="1" value="1" required>
+<label for="regularizer_songs">Automatically generated supplementary clips</label><input id="regularizer_songs" type="number" min="1" value="4" required>
+<label for="regularizer_steps">Synthesis steps for supplementary clips</label><input id="regularizer_steps" type="number" min="1" value="16" required>
+<label for="regularizer_batch">Tokenizer regularization windows per update</label><input id="regularizer_batch" type="number" min="1" value="1" required>
+<label for="regularizer_weight">Tokenizer regularization weight</label><input id="regularizer_weight" type="number" min="0" step="0.1" value="1" required>
+<label for="generated_flow_percent">Generated-audio flow windows · %</label><input id="generated_flow_percent" type="number" min="0" max="100" step="any" value="25" required><small>0 = flow training uses only your recordings. Set tokenizer regularization weight to 0 too to disable both retention paths and skip supplementary generation. Applies to new runs; Resume retains original settings.</small>
+<label for="seed">Seed</label><input id="seed" type="number" min="0" max="4294967295" value="831001" required></details>
+<div class="experiment-note"><span>✳</span><p><strong>Experimental local adaptation.</strong><br>Uses a small automatically generated dataset for retention, hard-token cross entropy, checkpointed layers and short windows. This is not an exact reproduction of the author’s large-corpus recipe and does not guarantee cleaner audio. With multiple songs, the last song is held out; with one song, its final quarter is held out. Initial preprocessing and supplementary generation can take time. Keep your Mac awake.</p></div>
+<button class="primary" id="train-button" type="submit" disabled>Queue training <span>↗</span></button><p class="form-note">Runs one at a time with your audio jobs. Each complete checkpoint appears in Semantic lab (about 300 MiB per pair). Stop requests finish the current update and save changed weights; during preprocessing they finish the current extraction/generation unit. Force-quitting can lose work since the last checkpoint.</p></form>
+<p id="error" role="alert" hidden></p></section>
+<section class="sessions"><h2>Training runs</h2><p class="lab-copy">Stop and save, then use Resume on the stopped run to continue its original schedule, optimizer and dataset. Resume queues a new continuation; form settings apply only to fresh runs. Checkpoints from older versions support warm starts only. Resumable state adds roughly 600 MiB per checkpoint. Losses are noisy window samples, not audio-quality scores.</p><label><input type="checkbox" id="show-older"> Show older training runs</label><div id="runs"></div><h2>Available checkpoints</h2><div id="checkpoints"></div></section></div>
+</main><script src="/training.js" defer></script></body></html>

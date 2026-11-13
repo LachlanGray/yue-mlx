@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yue2-mlx"
+version = "0.1.0"
+description = "Staged YuE2 inference and audio VAE experiments on Apple silicon"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/*.txt"]
+requires-python = ">=3.11"
+dependencies = ["mlx>=0.31", "numpy>=2", "safetensors>=0.7", "tiktoken>=0.12", "huggingface-hub>=0.36", "soundfile>=0.13", "scipy>=1.15"]
+
+[project.optional-dependencies]
+test = ["pytest>=9", "torch>=2.10", "transformers==4.57.6", "accelerate>=1"]
+
+[project.scripts]
+yue2-mlx = "yue2_mlx.cli:main"
+yue2-mlx-web = "yue2_mlx.web:main"
+
+[tool.setuptools.package-data]
+yue2_mlx = ["static/*"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

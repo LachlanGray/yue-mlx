@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube Audio Downloader</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background:#111; color:#eee }
+    * { box-sizing:border-box }
+    body { margin:0; min-height:100vh; background:radial-gradient(circle at 20% 0,#2a2338 0,transparent 38rem),#111 }
+    main { width:min(780px,calc(100% - 32px)); margin:0 auto; padding:64px 0 }
+    h1 { font-size:clamp(2rem,6vw,3.6rem); letter-spacing:-.05em; margin:0 0 10px }
+    .lede { color:#aaa; margin:0 0 36px }
+    .card { background:#191919dd; border:1px solid #343434; border-radius:18px; padding:22px; box-shadow:0 20px 70px #0006 }
+    label { display:block; font-size:.78rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:#aaa; margin:0 0 8px }
+    input,textarea { width:100%; border:1px solid #414141; border-radius:10px; padding:12px 14px; background:#101010; color:#fff; font:inherit; outline:none }
+    input:focus,textarea:focus { border-color:#aa7cff; box-shadow:0 0 0 3px #aa7cff22 }
+    textarea { min-height:132px; resize:vertical; line-height:1.55 }
+    .field + .field { margin-top:20px }
+    button { margin-top:18px; border:0; border-radius:999px; padding:12px 20px; background:#eee; color:#111; font:inherit; font-weight:700; cursor:pointer }
+    button:hover { background:#c9acff }
+    button:disabled { opacity:.55; cursor:wait }
+    #message { color:#ffadad; min-height:1.4em; margin:12px 2px 0 }
+    .queue-head { display:flex; align-items:baseline; justify-content:space-between; margin:38px 2px 12px }
+    h2 { margin:0; font-size:1.15rem }
+    #summary { color:#888; font-size:.9rem }
+    #jobs { display:grid; gap:9px }
+    .job { border:1px solid #303030; border-radius:12px; padding:14px 16px; background:#171717 }
+    .job-top { display:flex; gap:12px; justify-content:space-between; align-items:center }
+    .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:650 }
+    .state { flex:none; font-size:.73rem; text-transform:uppercase; letter-spacing:.08em; color:#999 }
+    .running .state { color:#c9acff }.done .state { color:#8be2ad }.failed .state { color:#ff9494 }
+    .detail { color:#888; font-size:.85rem; margin-top:6px; white-space:pre-wrap; overflow-wrap:anywhere }
+    .empty { color:#777; text-align:center; padding:34px; border:1px dashed #333; border-radius:12px }
+    @media(max-width:520px){main{padding:34px 0}.card{padding:17px}.job-top{align-items:flex-start}.state{margin-top:3px}}
+  </style>
+</head>
+<body><main>
+  <h1>YouTube audio</h1>
+  <p class="lede">Queue videos and save their highest-quality audio as WAV files.</p>
+  <form class="card" id="form">
+    <div class="field"><label for="directory">Download directory</label><input id="directory" required spellcheck="false" placeholder="~/Downloads"></div>
+    <div class="field"><label for="urls">YouTube URLs · one per line</label><textarea id="urls" required spellcheck="false" placeholder="https://www.youtube.com/watch?v=…"></textarea></div>
+    <button id="submit">Download</button><div id="message" role="alert"></div>
+  </form>
+  <div class="queue-head"><h2>Queue</h2><span id="summary"></span></div>
+  <div id="jobs"><div class="empty">Nothing queued yet.</div></div>
+</main>
+<script>
+const form=document.querySelector('#form'), directory=document.querySelector('#directory'), urls=document.querySelector('#urls');
+const jobsNode=document.querySelector('#jobs'), message=document.querySelector('#message'), summary=document.querySelector('#summary'), submit=document.querySelector('#submit');
+directory.value=localStorage.getItem('youtube-audio-directory')||'~/Downloads';
+const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+form.addEventListener('submit',async event=>{
+  event.preventDefault(); message.textContent=''; submit.disabled=true;
+  const list=urls.value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+  try {
+    const response=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({output_dir:directory.value,urls:list})});
+    const data=await response.json(); if(!response.ok) throw new Error(data.error||'Could not add downloads.');
+    localStorage.setItem('youtube-audio-directory',directory.value); urls.value=''; await refresh();
+  } catch(error) { message.textContent=error.message; }
+  finally { submit.disabled=false; }
+});
+async function refresh(){
+  try {
+    const response=await fetch('/api/state',{cache:'no-store'}), state=await response.json();
+    summary.textContent=state.busy?`${state.queued} waiting · downloading now`:state.queued?`${state.queued} waiting`:'Idle';
+    jobsNode.innerHTML=state.jobs.length?state.jobs.map(job=>{
+      const label=job.title||job.url, status=job.status==='queued'&&job.queue_position?`queued · ${job.queue_position}`:job.status;
+      const detail=job.status==='done'?job.output_path:job.progress;
+      return `<article class="job ${escapeHtml(job.status)}"><div class="job-top"><div class="name" title="${escapeHtml(job.url)}">${escapeHtml(label)}</div><div class="state">${escapeHtml(status)}</div></div><div class="detail">${escapeHtml(detail)}</div></article>`;
+    }).join(''):'<div class="empty">Nothing queued yet.</div>';
+  } catch(error) { summary.textContent='Disconnected'; }
+}
+refresh(); setInterval(refresh,1000);
+</script></body></html>

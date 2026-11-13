@@ -1,0 +1,19 @@
+direction: down
+state: "Current acoustic state z(t)\n[F, 64] · starts as Gaussian noise at t = 1"
+cache: "Fixed AR conditioning\nK/V at each of 28 layers"
+velocity: NAR velocity evaluation {
+  project: "Pad one frame at each end\nvae2llm: 64 → 2048"
+  add: "Add timestep embedding\nAdd audio-position embedding"
+  blocks: "28 residual transformer layers\nRMSNorm → attention → gated MLP\nAudio queries see AR K/V + all audio K/V"
+  out: "Final RMSNorm\nllm2vae: 2048 → 64\nRemove two padding frames → velocity v"
+  project -> add -> blocks -> out
+}
+step: "Explicit midpoint integration\nΔ = 1 / steps\nv₁ = v(z, t)\nz_mid = z − (Δ/2) v₁\nv₂ = v(z_mid, t − Δ/2)\nz_next = z − Δ v₂"
+next: "Advance t ← t − Δ\nRepeat until t = 0\n32 steps = 64 velocity evaluations"
+output: "Final continuous latents [F, 64]\nCast to FP32 → save → VAE decode"
+state -> velocity.project
+cache -> velocity.blocks
+velocity.out -> step: same network evaluated twice per step
+step -> next
+next -> state: next step {style.stroke-dash: 4}
+next -> output: finished

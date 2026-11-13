@@ -1,0 +1,13 @@
+direction: down
+ar: "AR layer i · already computed, then unloaded\nContextual prompt + semantic sequence\nProject to K_AR and V_AR\nEach [1, 8, L, 128] · held fixed"
+state: "NAR acoustic hidden states at layer i\n[1, F+2, 2048] · change with each evaluation"
+project: "NAR RMSNorm + its own learned projections\nQ_audio: [1, 16, F+2, 128]\nK_audio, V_audio: [1, 8, F+2, 128]\nQ/K normalization + RoPE on Q/K"
+join: "Concatenate along sequence axis, NOT channel axis\nK_all = [K_AR ; K_audio]\nV_all = [V_AR ; V_audio]\nEach [1, 8, L+F+2, 128]"
+attend: "One grouped-query attention operation\nQ_audio queries ALL positions in K_all\nOne softmax across AR + audio positions\nWeighted sum of V_all"
+out: "Output projection + residual, then norm / MLP + residual\nUpdated AUDIO hidden states only\n[1, F+2, 2048] → next NAR layer\nAR cache is never updated"
+state -> project
+ar -> join: fixed keys / values
+project -> join: new audio keys / values
+project -> attend: new audio queries only
+join -> attend
+attend -> out

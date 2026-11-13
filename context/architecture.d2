@@ -1,0 +1,41 @@
+direction: down
+classes: {
+  model: {style.fill: "#e4eddf"; style.stroke: "#46634e"; style.border-radius: 10}
+  data: {style.fill: "#e8effa"; style.stroke: "#56749b"; style.border-radius: 10}
+}
+style_text: "Style · plain text\ne.g. warm piano pop" {class: data}
+lyrics: "Lyrics · plain text\ne.g. [Verse] Morning light..." {class: data}
+assemble: "Format one text string\ninstruction + [Tags] + style + [Lyrics] + lyrics\nNo neural network here"
+tokenize: "Text tokenizer · no neural network\nString → variable-length list of integer IDs"
+abc: "Optional ABC score · musical notation as text\nSupplied text is tokenized into IDs\nOr AR generates score IDs first; or omit" {class: data}
+text: "Assemble prompt IDs in sequence order\nStart marker + text IDs + score markers / IDs\n+ music-start marker\nOne 1D list, not concatenated feature vectors" {class: data}
+ar: "AR transformer · separately loadable\n28 causal layers · width 2048\nOptional ABC planning, then semantic generation" {class: model}
+semantic: "Discrete semantic space\nOne ID per frame · 32,768 possible IDs\nNominally 25 frames / second" {class: data}
+join: "Concatenate integer sequences\n[prompt IDs, offset semantic IDs, music-end ID]\nOne complete input sequence [L]" {class: data}
+condition: "Same AR weights reloaded · no output classifier\nEmbedding lookup: each ID → 2048 numbers\n28 causal layers contextualize the sequence\nSave each layer's projected K and V" {class: model}
+cache: "Conditioning memory, not audio latents\n28 pairs of per-layer keys and values\nRetained after AR weights are unloaded" {class: data}
+noise: "Gaussian noise\n[F, 64]" {class: data}
+nar: "NAR acoustic transformer · separately loadable\n28 non-causal layers · width 2048\nIterative conditional flow matching" {class: model}
+audio: "Existing recording\n48 kHz stereo after preprocessing" {class: data}
+encoder: "VAE encoder · separately loadable · FP32\nConvolutions → 64 means + 64 scale parameters\nLab keeps posterior mean" {class: model}
+latent: "Continuous acoustic / VAE latent space\n[F, 64] floating-point values\nNominally 25 frames / second" {class: data}
+decoder: "VAE decoder · separately loadable · FP32\nConvolutions + upsampling" {class: model}
+wave: "Waveform space\n[S, 2] · 48 kHz stereo" {class: data}
+style_text -> assemble
+lyrics -> assemble
+assemble -> tokenize
+tokenize -> text
+abc -> text
+text -> ar
+ar -> semantic: sample one token at a time
+semantic -> join: add vocabulary offset to each ID
+text -> join: reuse complete prompt including score
+join -> condition
+condition -> cache
+cache -> nar: read-only K/V at matching layer
+noise -> nar: evolving state; projected 64 → 2048
+nar -> latent: generated latents
+audio -> encoder
+encoder -> latent: encoded latents
+latent -> decoder
+decoder -> wave
